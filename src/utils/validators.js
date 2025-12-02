@@ -15,3 +15,8 @@ export function isValidUrl(url) {
 export function isNotEmpty(value) {
   return value !== null && value !== undefined && value !== '';
 }
+
+export function isValidPhoneNumber(phone) {
+  const phoneRegex = /^\+?[\d\s\-\(\)]+$/;
+  return phoneRegex.test(phone) && phone.replace(/\D/g, '').length >= 10;
+}

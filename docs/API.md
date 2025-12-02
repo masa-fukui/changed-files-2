@@ -22,3 +22,24 @@ Posts data to the server.
   "value": "string"
 }
 ```
+
+**Response:**
+```json
+{
+  "success": true,
+  "id": "string"
+}
+```
+
+### DELETE /api/data/:id
+Deletes a data entry by ID.
+
+**Parameters:**
+- `id` (string): The ID of the data entry to delete
+
+**Response:**
+```json
+{
+  "success": true
+}
+```
