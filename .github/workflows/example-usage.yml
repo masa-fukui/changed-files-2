@@ -10,9 +10,30 @@ on:
   workflow_dispatch:
 
 jobs:
-  # Example 1: Detect all changed files
+  # Example 1: Detect all changed files and display summary
   detect-all-changes:
     uses: ./.github/workflows/detect-changed-files.yml
+
+  display-summary:
+    needs: detect-all-changes
+    runs-on: ubuntu-latest
+    steps:
+      - name: Display results summary
+        run: |
+          echo "## Changed Files Detection Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Has Changes:** ${{ needs.detect-all-changes.outputs.has_changes }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Changed Files Count:** ${{ needs.detect-all-changes.outputs.changed_count }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [ "${{ needs.detect-all-changes.outputs.has_changes }}" = "true" ]; then
+            echo "**Changed Files:**" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            echo "${{ needs.detect-all-changes.outputs.changed_files }}" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+          else
+            echo "*No files matched the specified patterns.*" >> $GITHUB_STEP_SUMMARY
+          fi
 
   # Example 2: Only detect TypeScript/JavaScript changes
   detect-code-changes:

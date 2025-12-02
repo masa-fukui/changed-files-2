@@ -169,29 +169,3 @@ jobs:
             echo "changed_files=" >> $GITHUB_OUTPUT
             echo "changed_count=0" >> $GITHUB_OUTPUT
           fi
-
-      - name: Display results
-        run: |
-          echo "## Changed Files Detection Results" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Has Changes:** ${{ steps.detect.outputs.has_changes }}" >> $GITHUB_STEP_SUMMARY
-          echo "**Changed Files Count:** ${{ steps.detect.outputs.changed_count }}" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-
-          if [ "${{ steps.detect.outputs.has_changes }}" = "true" ]; then
-            echo "**Changed Files:**" >> $GITHUB_STEP_SUMMARY
-            echo '```' >> $GITHUB_STEP_SUMMARY
-            echo "${{ steps.detect.outputs.changed_files }}" >> $GITHUB_STEP_SUMMARY
-            echo '```' >> $GITHUB_STEP_SUMMARY
-          else
-            echo "*No files matched the specified patterns.*" >> $GITHUB_STEP_SUMMARY
-          fi
-
-      - name: Example - Use changed files in next steps
-        if: steps.detect.outputs.has_changes == 'true'
-        run: |
-          echo "You can use the changed files in subsequent steps:"
-          echo "Changed files count: ${{ steps.detect.outputs.changed_count }}"
-          echo ""
-          echo "Changed files list:"
-          echo "${{ steps.detect.outputs.changed_files }}"
