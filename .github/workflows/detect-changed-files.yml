@@ -1,9 +1,6 @@
 name: Detect Changed Files
 
 on:
-  pull_request:
-    branches:
-      - main
   workflow_dispatch:
     inputs:
       include_patterns:
