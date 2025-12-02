@@ -63,7 +63,9 @@ jobs:
         run: |
           set -e
 
-          # Determine base reference
+          # ============================================
+          # 1. Get changed files from git
+          # ============================================
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             BASE_REF="${{ github.event.pull_request.base.sha }}"
             HEAD_REF="${{ github.event.pull_request.head.sha }}"
@@ -73,110 +75,75 @@ jobs:
           fi
 
           echo "Comparing $HEAD_REF against $BASE_REF"
-
-          # Get all changed files
           git diff --name-only "$BASE_REF" "$HEAD_REF" > all_changed_files.txt
 
           echo "All changed files:"
           cat all_changed_files.txt
 
-          # Get include and exclude patterns
+          # ============================================
+          # 2. Parse include/exclude patterns
+          # ============================================
           INCLUDE_INPUT='${{ inputs.include_patterns || github.event.inputs.include_patterns }}'
           EXCLUDE_INPUT='${{ inputs.exclude_patterns || github.event.inputs.exclude_patterns }}'
 
-          # Use default values if empty
-          if [ -z "$INCLUDE_INPUT" ] || [ "$INCLUDE_INPUT" = "null" ]; then
-            INCLUDE_INPUT='*'
-          fi
+          # Default to match all if no patterns provided
+          [ -z "$INCLUDE_INPUT" ] || [ "$INCLUDE_INPUT" = "null" ] && INCLUDE_INPUT='*'
 
-          echo "Include input: $INCLUDE_INPUT"
-          echo "Exclude input: $EXCLUDE_INPUT"
-
-          # Function to parse patterns (supports JSON arrays, newline-separated, or single pattern)
+          # Parse patterns (handles JSON arrays or newline-separated strings)
           parse_patterns() {
-            local input="$1"
-
-            # Return empty array if input is empty
-            if [ -z "$input" ]; then
-              return
-            fi
-
-            # Try to parse as JSON array first
-            if echo "$input" | jq -e . >/dev/null 2>&1; then
-              echo "$input" | jq -r '.[]' 2>/dev/null && return
-            fi
-
-            # Otherwise treat as newline-separated or single pattern
-            echo "$input"
+            [ -z "$1" ] && return
+            echo "$1" | jq -r '.[]' 2>/dev/null || echo "$1"
           }
 
-          # Parse patterns into arrays
-          readarray -t INCLUDE_ARRAY < <(parse_patterns "$INCLUDE_INPUT")
-          readarray -t EXCLUDE_ARRAY < <(parse_patterns "$EXCLUDE_INPUT")
+          readarray -t INCLUDE < <(parse_patterns "$INCLUDE_INPUT")
+          readarray -t EXCLUDE < <(parse_patterns "$EXCLUDE_INPUT")
 
-          echo "Include patterns (${#INCLUDE_ARRAY[@]}):"
-          printf '  - %s\n' "${INCLUDE_ARRAY[@]}"
-          echo "Exclude patterns (${#EXCLUDE_ARRAY[@]}):"
-          printf '  - %s\n' "${EXCLUDE_ARRAY[@]}"
+          echo "Include patterns (${#INCLUDE[@]}):"
+          printf '  - %s\n' "${INCLUDE[@]}"
+          echo "Exclude patterns (${#EXCLUDE[@]}):"
+          printf '  - %s\n' "${EXCLUDE[@]}"
 
-          # Function to match glob patterns
-          match_pattern() {
+          # ============================================
+          # 3. Pattern matching function
+          # ============================================
+          matches() {
             local file="$1"
             shift
             local patterns=("$@")
 
-            # If no patterns, don't match anything
-            if [ ${#patterns[@]} -eq 0 ]; then
-              return 1
-            fi
+            [ ${#patterns[@]} -eq 0 ] && return 1
 
             for pattern in "${patterns[@]}"; do
-              pattern=$(echo "$pattern" | xargs)  # trim whitespace
+              pattern=$(echo "$pattern" | xargs)
+              [ -z "$pattern" ] && continue
 
-              # Skip empty patterns
-              if [ -z "$pattern" ]; then
-                continue
-              fi
+              # Match all wildcards
+              [[ "$pattern" =~ ^(\*|\*\*|\*\*/\*)$ ]] && return 0
 
-              # Match everything wildcards
-              if [ "$pattern" = "*" ] || [ "$pattern" = "**/*" ] || [ "$pattern" = "**" ]; then
-                return 0
-              fi
+              # Convert glob to regex
+              local regex="$pattern"
+              regex="${regex//\*\*/.*}"      # ** matches any path
+              regex="${regex//\*/[^/]*}"     # * matches within directory
 
-              # Convert glob to regex for simple matching
-              if [[ "$pattern" == *"**"* ]]; then
-                # Handle ** (match any directories)
-                regex_pattern="${pattern//\*\*/.*}"
-                regex_pattern="${regex_pattern//\*/[^/]*}"
-              elif [[ "$pattern" == *"*"* ]]; then
-                # Handle single * (match within directory)
-                regex_pattern="${pattern//\*/.*}"
-              else
-                # Exact match or extension
-                regex_pattern="$pattern"
-              fi
-
-              if [[ "$file" =~ $regex_pattern ]]; then
-                return 0
-              fi
+              [[ "$file" =~ $regex ]] && return 0
             done
 
             return 1
           }
 
-          # Filter files based on include/exclude patterns
+          # ============================================
+          # 4. Filter files by patterns
+          # ============================================
           > filtered_files.txt
 
           while IFS= read -r file; do
-            # Check if file matches include patterns
-            if match_pattern "$file" "${INCLUDE_ARRAY[@]}"; then
-              # Check if file should be excluded
-              if [ ${#EXCLUDE_ARRAY[@]} -gt 0 ] && match_pattern "$file" "${EXCLUDE_ARRAY[@]}"; then
+            if matches "$file" "${INCLUDE[@]}"; then
+              if [ ${#EXCLUDE[@]} -gt 0 ] && matches "$file" "${EXCLUDE[@]}"; then
                 echo "  [EXCLUDED] $file"
-                continue
+              else
+                echo "  [INCLUDED] $file"
+                echo "$file" >> filtered_files.txt
               fi
-              echo "  [INCLUDED] $file"
-              echo "$file" >> filtered_files.txt
             else
               echo "  [SKIPPED] $file"
             fi
@@ -188,15 +155,15 @@ jobs:
           cat filtered_files.txt || echo "(none)"
           echo "=========================================="
 
-          # Set outputs
+          # ============================================
+          # 5. Set workflow outputs
+          # ============================================
           if [ -s filtered_files.txt ]; then
             echo "has_changes=true" >> $GITHUB_OUTPUT
             echo "changed_files<<EOF" >> $GITHUB_OUTPUT
             cat filtered_files.txt >> $GITHUB_OUTPUT
             echo "EOF" >> $GITHUB_OUTPUT
-
-            CHANGED_COUNT=$(wc -l < filtered_files.txt | xargs)
-            echo "changed_count=$CHANGED_COUNT" >> $GITHUB_OUTPUT
+            echo "changed_count=$(wc -l < filtered_files.txt | xargs)" >> $GITHUB_OUTPUT
           else
             echo "has_changes=false" >> $GITHUB_OUTPUT
             echo "changed_files=" >> $GITHUB_OUTPUT
