@@ -1,0 +1,233 @@
+name: Detect Changed Files
+
+on:
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      include_patterns:
+        description: 'Patterns to include (one per line or JSON array). Use "*" for all files.'
+        required: false
+        default: '*'
+      exclude_patterns:
+        description: 'Patterns to exclude (one per line or JSON array). Optional.'
+        required: false
+        default: ''
+      base_ref:
+        description: 'Base branch to compare against'
+        required: false
+        default: 'main'
+  workflow_call:
+    inputs:
+      include_patterns:
+        description: 'Patterns to include (multiline string). Use "*" for all files.'
+        type: string
+        required: false
+        default: '*'
+      exclude_patterns:
+        description: 'Patterns to exclude (multiline string). Optional.'
+        type: string
+        required: false
+        default: ''
+      base_ref:
+        description: 'Base branch to compare against'
+        type: string
+        required: false
+        default: 'main'
+    outputs:
+      has_changes:
+        description: 'Whether any files matched the patterns'
+        value: ${{ jobs.detect-changes.outputs.has_changes }}
+      changed_files:
+        description: 'Newline-separated list of changed files'
+        value: ${{ jobs.detect-changes.outputs.changed_files }}
+      changed_count:
+        description: 'Number of changed files'
+        value: ${{ jobs.detect-changes.outputs.changed_count }}
+
+jobs:
+  detect-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      has_changes: ${{ steps.detect.outputs.has_changes }}
+      changed_files: ${{ steps.detect.outputs.changed_files }}
+      changed_count: ${{ steps.detect.outputs.changed_count }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect changed files
+        id: detect
+        shell: bash
+        run: |
+          set -e
+
+          # Determine base reference
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE_REF="${{ github.event.pull_request.base.sha }}"
+            HEAD_REF="${{ github.event.pull_request.head.sha }}"
+          else
+            BASE_REF="origin/${{ github.event.inputs.base_ref || 'main' }}"
+            HEAD_REF="HEAD"
+          fi
+
+          echo "Comparing $HEAD_REF against $BASE_REF"
+
+          # Get all changed files
+          git diff --name-only "$BASE_REF" "$HEAD_REF" > all_changed_files.txt
+
+          echo "All changed files:"
+          cat all_changed_files.txt
+
+          # Get include and exclude patterns
+          INCLUDE_INPUT='${{ inputs.include_patterns || github.event.inputs.include_patterns }}'
+          EXCLUDE_INPUT='${{ inputs.exclude_patterns || github.event.inputs.exclude_patterns }}'
+
+          # Use default values if empty
+          if [ -z "$INCLUDE_INPUT" ] || [ "$INCLUDE_INPUT" = "null" ]; then
+            INCLUDE_INPUT='*'
+          fi
+
+          echo "Include input: $INCLUDE_INPUT"
+          echo "Exclude input: $EXCLUDE_INPUT"
+
+          # Function to parse patterns (supports JSON arrays, newline-separated, or single pattern)
+          parse_patterns() {
+            local input="$1"
+
+            # Return empty array if input is empty
+            if [ -z "$input" ]; then
+              return
+            fi
+
+            # Try to parse as JSON array first
+            if echo "$input" | jq -e . >/dev/null 2>&1; then
+              echo "$input" | jq -r '.[]' 2>/dev/null && return
+            fi
+
+            # Otherwise treat as newline-separated or single pattern
+            echo "$input"
+          }
+
+          # Parse patterns into arrays
+          readarray -t INCLUDE_ARRAY < <(parse_patterns "$INCLUDE_INPUT")
+          readarray -t EXCLUDE_ARRAY < <(parse_patterns "$EXCLUDE_INPUT")
+
+          echo "Include patterns (${#INCLUDE_ARRAY[@]}):"
+          printf '  - %s\n' "${INCLUDE_ARRAY[@]}"
+          echo "Exclude patterns (${#EXCLUDE_ARRAY[@]}):"
+          printf '  - %s\n' "${EXCLUDE_ARRAY[@]}"
+
+          # Function to match glob patterns
+          match_pattern() {
+            local file="$1"
+            shift
+            local patterns=("$@")
+
+            # If no patterns, don't match anything
+            if [ ${#patterns[@]} -eq 0 ]; then
+              return 1
+            fi
+
+            for pattern in "${patterns[@]}"; do
+              pattern=$(echo "$pattern" | xargs)  # trim whitespace
+
+              # Skip empty patterns
+              if [ -z "$pattern" ]; then
+                continue
+              fi
+
+              # Match everything wildcards
+              if [ "$pattern" = "*" ] || [ "$pattern" = "**/*" ] || [ "$pattern" = "**" ]; then
+                return 0
+              fi
+
+              # Convert glob to regex for simple matching
+              if [[ "$pattern" == *"**"* ]]; then
+                # Handle ** (match any directories)
+                regex_pattern="${pattern//\*\*/.*}"
+                regex_pattern="${regex_pattern//\*/[^/]*}"
+              elif [[ "$pattern" == *"*"* ]]; then
+                # Handle single * (match within directory)
+                regex_pattern="${pattern//\*/.*}"
+              else
+                # Exact match or extension
+                regex_pattern="$pattern"
+              fi
+
+              if [[ "$file" =~ $regex_pattern ]]; then
+                return 0
+              fi
+            done
+
+            return 1
+          }
+
+          # Filter files based on include/exclude patterns
+          > filtered_files.txt
+
+          while IFS= read -r file; do
+            # Check if file matches include patterns
+            if match_pattern "$file" "${INCLUDE_ARRAY[@]}"; then
+              # Check if file should be excluded
+              if [ ${#EXCLUDE_ARRAY[@]} -gt 0 ] && match_pattern "$file" "${EXCLUDE_ARRAY[@]}"; then
+                echo "  [EXCLUDED] $file"
+                continue
+              fi
+              echo "  [INCLUDED] $file"
+              echo "$file" >> filtered_files.txt
+            else
+              echo "  [SKIPPED] $file"
+            fi
+          done < all_changed_files.txt
+
+          echo ""
+          echo "=========================================="
+          echo "Filtered changed files:"
+          cat filtered_files.txt || echo "(none)"
+          echo "=========================================="
+
+          # Set outputs
+          if [ -s filtered_files.txt ]; then
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+            echo "changed_files<<EOF" >> $GITHUB_OUTPUT
+            cat filtered_files.txt >> $GITHUB_OUTPUT
+            echo "EOF" >> $GITHUB_OUTPUT
+
+            CHANGED_COUNT=$(wc -l < filtered_files.txt | xargs)
+            echo "changed_count=$CHANGED_COUNT" >> $GITHUB_OUTPUT
+          else
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+            echo "changed_files=" >> $GITHUB_OUTPUT
+            echo "changed_count=0" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Display results
+        run: |
+          echo "## Changed Files Detection Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Has Changes:** ${{ steps.detect.outputs.has_changes }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Changed Files Count:** ${{ steps.detect.outputs.changed_count }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [ "${{ steps.detect.outputs.has_changes }}" = "true" ]; then
+            echo "**Changed Files:**" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            echo "${{ steps.detect.outputs.changed_files }}" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+          else
+            echo "*No files matched the specified patterns.*" >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Example - Use changed files in next steps
+        if: steps.detect.outputs.has_changes == 'true'
+        run: |
+          echo "You can use the changed files in subsequent steps:"
+          echo "Changed files count: ${{ steps.detect.outputs.changed_count }}"
+          echo ""
+          echo "Changed files list:"
+          echo "${{ steps.detect.outputs.changed_files }}"

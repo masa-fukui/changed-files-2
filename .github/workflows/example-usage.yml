@@ -1,0 +1,98 @@
+# Example: How to use the changed files detector workflow
+#
+# This is a reference example showing different ways to use the
+# detect-changed-files workflow in your own workflows.
+
+name: Example - Using Changed Files Detector
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  # Example 1: Detect all changed files
+  detect-all-changes:
+    uses: ./.github/workflows/detect-changed-files.yml
+
+  # Example 2: Only detect TypeScript/JavaScript changes
+  detect-code-changes:
+    uses: ./.github/workflows/detect-changed-files.yml
+    with:
+      include_patterns: |
+        *.ts
+        *.tsx
+        *.js
+        *.jsx
+
+  # Example 3: Detect config changes only
+  detect-config-changes:
+    uses: ./.github/workflows/detect-changed-files.yml
+    with:
+      include_patterns: |
+        *.yml
+        *.yaml
+        *.json
+
+  # Example 4: Detect changes excluding tests
+  detect-source-changes:
+    uses: ./.github/workflows/detect-changed-files.yml
+    with:
+      include_patterns: |
+        src/**
+      exclude_patterns: |
+        **/*.test.ts
+        **/*.test.js
+
+  # Example 5: Run build only if source files changed
+  build-if-changed:
+    needs: detect-source-changes
+    if: needs.detect-source-changes.outputs.has_changes == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show changed files
+        run: |
+          echo "Found ${{ needs.detect-source-changes.outputs.changed_count }} changed files:"
+          echo "${{ needs.detect-source-changes.outputs.changed_files }}"
+
+      - name: Build project
+        run: |
+          echo "Building project..."
+          # Add your build commands here
+          # npm run build
+          # go build
+          # etc.
+
+  # Example 6: Run database migrations if SQL files changed
+  run-migrations:
+    needs: detect-config-changes
+    if: contains(needs.detect-config-changes.outputs.changed_files, '.sql')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run migrations
+        run: |
+          echo "Running database migrations..."
+          # Add your migration commands here
+
+  # Example 7: Multiple conditional jobs based on file types
+  detect-file-types:
+    uses: ./.github/workflows/detect-changed-files.yml
+
+  test-backend:
+    needs: detect-file-types
+    if: contains(needs.detect-file-types.outputs.changed_files, 'src/services/')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Test backend
+        run: echo "Testing backend services..."
+
+  test-frontend:
+    needs: detect-file-types
+    if: contains(needs.detect-file-types.outputs.changed_files, 'src/components/')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Test frontend
+        run: echo "Testing frontend components..."

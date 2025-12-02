@@ -1,0 +1,9 @@
+requirements.md
+node_modules/
+dist/
+build/
+*.log
+.DS_Store
+.env
+coverage/
+.claude

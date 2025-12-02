@@ -1,0 +1,14 @@
+{
+  "name": "changed-files-demo",
+  "version": "1.0.0",
+  "description": "Demo repository for testing changed files detection",
+  "main": "index.js",
+  "scripts": {
+    "test": "jest",
+    "build": "webpack",
+    "dev": "webpack serve"
+  },
+  "keywords": ["github-actions", "changed-files", "demo"],
+  "author": "",
+  "license": "MIT"
+}

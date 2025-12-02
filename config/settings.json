@@ -1,0 +1,15 @@
+{
+  "app": {
+    "name": "Changed Files Demo",
+    "version": "1.0.0",
+    "environment": "development"
+  },
+  "api": {
+    "baseUrl": "https://api.example.com",
+    "timeout": 5000
+  },
+  "features": {
+    "enableLogging": true,
+    "enableAnalytics": false
+  }
+}
